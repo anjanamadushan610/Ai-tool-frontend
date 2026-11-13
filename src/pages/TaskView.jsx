@@ -8,7 +8,7 @@ import { api } from '../api'
 import { useAuth } from '../auth'
 import { fmt } from '../time'
 
-export const STATUS_COLOR = { queued: 'blue', running: 'processing', done: 'green', failed: 'red', stopped: 'orange' }
+export const STATUS_COLOR = { queued: 'blue', running: 'processing', done: 'green', failed: 'red', stopped: 'orange', interrupted: 'magenta' }
 const ACTIVE = ['queued', 'running']
 
 function short(v, n = 400) {
