@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Alert, App, Button, Card, Empty, List, Space, Table, Tag, Typography } from 'antd'
-import { CodeOutlined, PlayCircleOutlined, PoweroffOutlined, ReloadOutlined } from '@ant-design/icons'
+import { Alert, App, AutoComplete, Button, Card, Form, Input, List, Select, Space, Table, Tag, Typography } from 'antd'
+import { CodeOutlined, PlayCircleOutlined, PoweroffOutlined, ReloadOutlined, RocketOutlined } from '@ant-design/icons'
+import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import { useAuth } from '../auth'
-import { ago } from '../time'
+import { ago, fmt } from '../time'
+import { STATUS_COLOR } from './TaskView'
 
 const STATE_COLOR = { running: 'green', stopped: 'default', missing: 'default' }
 
@@ -122,6 +124,95 @@ function OwnerWorkspaces() {
   )
 }
 
+const OWNER_FOLDERS = [
+  'SRIBEESonline/fastapi_backend', 'SRIBEESonline/admin', 'SRIBEESonline/mobile', 'SRIBEESonline/partner-portal',
+  'SRIBEESonline/ecommerce-frontend', 'SribeesExpress/backend-fastapi', 'SribeesExpress/rider-app', 'Ai-tool',
+  '810/Sribees-Online-Finance-Backend', '810/Sribees-Online-Base-Price-Backend', '810/Sribees-Price-Intel-Backend',
+  '810/Sribees-Price', '810/Sribees-Online-NewOrder-App',
+].map((v) => ({ value: v }))
+
+function NewTask() {
+  const { me } = useAuth()
+  const { message } = App.useApp()
+  const nav = useNavigate()
+  const [form] = Form.useForm()
+  const [busy, setBusy] = useState(false)
+  const isOwner = me.role === 'owner'
+
+  const submit = async (v) => {
+    setBusy(true)
+    try {
+      const t = await api('/tasks', { method: 'POST', body: v })
+      form.resetFields(['prompt'])
+      nav(`/tasks/${t.id}`)
+    } catch (e) {
+      message.error(e.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Card title="New Claude task">
+      <Form
+        form={form}
+        layout="vertical"
+        onFinish={submit}
+        requiredMark={false}
+        initialValues={{ repo: isOwner ? 'SRIBEESonline/fastapi_backend' : me.repos[0] }}
+      >
+        <Form.Item name="repo" label={isOwner ? 'Folder in your workspace' : 'Repo'} rules={[{ required: true }]}>
+          {isOwner ? (
+            <AutoComplete options={OWNER_FOLDERS} filterOption={(i, o) => o.value.toLowerCase().includes(i.toLowerCase())} />
+          ) : (
+            <Select options={me.repos.map((r) => ({ value: r, label: r }))} placeholder="No repos assigned" />
+          )}
+        </Form.Item>
+        <Form.Item name="prompt" label="What should Claude do?" rules={[{ required: true }]}>
+          <Input.TextArea
+            autoSize={{ minRows: 3, maxRows: 10 }}
+            placeholder="e.g. Fix the failing test in tests/test_orders.py and explain the cause"
+          />
+        </Form.Item>
+        <Space wrap>
+          <Button type="primary" htmlType="submit" icon={<RocketOutlined />} loading={busy}>Start</Button>
+          <Typography.Text type="secondary">Reading and editing files runs freely; commands and web access ask you first.</Typography.Text>
+        </Space>
+      </Form>
+    </Card>
+  )
+}
+
+function TaskList() {
+  const [rows, setRows] = useState([])
+  const load = useCallback(() => api('/tasks').then(setRows).catch(() => {}), [])
+  useEffect(() => {
+    load()
+    const t = setInterval(load, 10000)
+    return () => clearInterval(t)
+  }, [load])
+  return (
+    <Card title="Tasks" extra={<Button icon={<ReloadOutlined />} onClick={load} />}>
+      <Table
+        rowKey="id"
+        size="small"
+        pagination={{ pageSize: 15, hideOnSinglePage: true }}
+        dataSource={rows}
+        scroll={{ x: 560 }}
+        locale={{ emptyText: 'No tasks yet' }}
+        columns={[
+          { title: 'Task', dataIndex: 'title', render: (v, t) => <Link to={`/tasks/${t.id}`}>{v}</Link> },
+          { title: 'Status', dataIndex: 'status', render: (s) => <Tag color={STATUS_COLOR[s]}>{s}</Tag> },
+          { title: 'Who', dataIndex: 'username', responsive: ['md'] },
+          { title: 'Repo', dataIndex: 'repo', responsive: ['lg'] },
+          { title: 'Cost', dataIndex: 'cost_usd', render: (c) => `$${c.toFixed(3)}`, responsive: ['md'] },
+          { title: 'When', dataIndex: 'created_at', render: fmt, responsive: ['md'] },
+        ]}
+      />
+    </Card>
+  )
+}
+
 export default function Home() {
   const { me, can } = useAuth()
   const isOwner = me.role === 'owner'
@@ -132,9 +223,8 @@ export default function Home() {
         Hello, {me.display_name || me.username}
       </Typography.Title>
       {isOwner ? <OwnerWorkspaces /> : can('workspace.open') && <MyWorkspace />}
-      <Card title="Claude tasks">
-        <Empty description="Prompting Claude from this page (live output, approvals, diffs) comes in phase B4. For now use Claude inside VS Code." />
-      </Card>
+      {can('tasks.start') && <NewTask />}
+      <TaskList />
       <Card title="Your repos">
         {repos.length ? (
           <List size="small" dataSource={repos} renderItem={(r) => <List.Item><Tag>{r}</Tag></List.Item>} />
