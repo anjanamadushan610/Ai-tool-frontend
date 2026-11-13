@@ -8,6 +8,19 @@ import { api } from '../api'
 import { useAuth } from '../auth'
 import { fmt } from '../time'
 import { IMAGE_ACCEPT, uploadImages } from '../uploads'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+
+function Md({ text }) {
+  // react-markdown never renders raw HTML, so a reply cannot inject markup into the page.
+  return (
+    <div className="sbai-md">
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ a: (p) => <a {...p} target="_blank" rel="noreferrer" /> }}>
+        {text}
+      </ReactMarkdown>
+    </div>
+  )
+}
 
 export const STATUS_COLOR = { queued: 'blue', running: 'processing', done: 'green', failed: 'red', stopped: 'orange', interrupted: 'magenta' }
 const ACTIVE = ['queued', 'running']
@@ -46,6 +59,9 @@ function Event({ e }) {
     return <Typography.Text type="secondary" style={{ fontSize: 12 }}>— {d.status}{d.by ? ` by ${d.by}` : ''} · {fmt(e.at)}</Typography.Text>
   }
   if (e.kind === 'error') return <Alert type="error" showIcon message={d.message} />
+  if (e.kind === 'ci') {
+    return <Typography.Text style={{ fontSize: 12 }}><Tag color="blue">dev deploy</Tag>{d.workflow} on development · {d.repo} · {d.by}</Typography.Text>
+  }
   if (e.kind === 'git') {
     return (
       <Typography.Text style={{ fontSize: 12 }}>
@@ -63,7 +79,7 @@ function Event({ e }) {
     return (
       <Space direction="vertical" style={{ width: '100%' }} size={4}>
         {(d.message?.content || []).map((c, i) => {
-          if (c.type === 'text') return <Typography.Paragraph key={i} style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{c.text}</Typography.Paragraph>
+          if (c.type === 'text') return <Md key={i} text={c.text} />
           if (c.type === 'tool_use') {
             return (
               <Typography.Text key={i} code style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
@@ -164,6 +180,61 @@ function CommitPanel({ id, canPush }) {
         <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12, marginTop: 8 }}>{result.steps.map((s) => `$ git ${s.step}\n${s.output}`).join('\n')}</pre>
       )}
     </Card>
+  )
+}
+
+const RUN_COLOR = { success: 'green', failure: 'red', cancelled: 'default', skipped: 'default' }
+
+function CiPanel({ id }) {
+  const { message, modal } = App.useApp()
+  const [data, setData] = useState(null)
+  const load = useCallback(() => api(`/tasks/${id}/ci`).then(setData).catch((e) => message.error(e.message)), [id, message])
+  useEffect(() => {
+    load()
+    const t = setInterval(load, 15000)
+    return () => clearInterval(t)
+  }, [load])
+
+  const deploy = (wf) => modal.confirm({
+    title: `Start ${wf} on development?`,
+    content: `${data.repo} — this deploys/builds the DEV environment only. Production is never started from the app.`,
+    okText: 'Start',
+    onOk: async () => {
+      try {
+        await api(`/tasks/${id}/deploy-dev`, { method: 'POST', body: { workflow: wf } })
+        message.success(`${wf} started`)
+        setTimeout(load, 4000)
+      } catch (e) {
+        message.error(e.message)
+      }
+    },
+  })
+
+  if (!data) return <Spin />
+  if (!data.repo) return <Empty description={data.error || 'No GitHub remote here.'} />
+  return (
+    <Space direction="vertical" style={{ width: '100%' }}>
+      <Space wrap>
+        <Typography.Text strong>{data.repo}</Typography.Text>
+        <Tag>{data.branch}</Tag>
+        {data.deployable.map((wf) => (
+          <Button key={wf} type="primary" size="small" onClick={() => deploy(wf)}>Deploy to dev: {wf}</Button>
+        ))}
+      </Space>
+      {data.error && <Alert type="warning" showIcon message={data.error} />}
+      {data.runs.map((r) => (
+        <Card key={r.id} size="small">
+          <Space wrap>
+            <Tag color={r.status !== 'completed' ? 'processing' : RUN_COLOR[r.conclusion] || 'default'}>
+              {r.status !== 'completed' ? r.status : r.conclusion}
+            </Tag>
+            <a href={r.url} target="_blank" rel="noreferrer">{r.name}</a>
+            <Typography.Text type="secondary">{r.branch} · {r.sha} · {r.event} · {fmt(r.created_at)}</Typography.Text>
+          </Space>
+        </Card>
+      ))}
+      {!data.runs.length && !data.error && <Empty description="No runs on this branch yet." />}
+    </Space>
   )
 }
 
@@ -357,6 +428,7 @@ export default function TaskView() {
             ),
           },
           { key: 'diff', label: 'Changes', children: <Diff id={id} active={active} canPush={mine && can('git.push_staff')} /> },
+          { key: 'ci', label: 'CI', children: <CiPanel id={id} /> },
         ]}
       />
     </Card>

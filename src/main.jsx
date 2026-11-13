@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom'
 import { App as AntApp, ConfigProvider, theme } from 'antd'
 import { AuthProvider } from './auth'
 import App from './App'
+import './md.css'
 
 const dark = window.matchMedia?.('(prefers-color-scheme: dark)').matches
 
