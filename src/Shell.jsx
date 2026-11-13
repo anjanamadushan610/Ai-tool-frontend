@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { Button, Drawer, Grid, Layout, Menu, Space, Tag, Typography } from 'antd'
 import {
-  AuditOutlined, CodeOutlined, LogoutOutlined, MenuOutlined, SafetyOutlined, TeamOutlined, UserOutlined,
+  AuditOutlined, CodeOutlined, DashboardOutlined, LogoutOutlined, MenuOutlined, SafetyOutlined, TeamOutlined, UserOutlined,
 } from '@ant-design/icons'
 import { useAuth } from './auth'
 
@@ -18,6 +18,7 @@ export default function Shell() {
 
   const items = [
     { key: '/', icon: <CodeOutlined />, label: 'Tasks' },
+    can('admin.metrics') && { key: '/server', icon: <DashboardOutlined />, label: 'Server' },
     can('admin.users') && { key: '/users', icon: <TeamOutlined />, label: 'Users' },
     can('admin.users') && { key: '/sessions', icon: <SafetyOutlined />, label: 'Sessions' },
     (can('audit.view_all') || can('audit.view_own')) && { key: '/audit', icon: <AuditOutlined />, label: 'Audit log' },

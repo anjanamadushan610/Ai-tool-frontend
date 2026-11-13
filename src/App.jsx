@@ -9,6 +9,7 @@ import Sessions from './pages/Sessions'
 import Audit from './pages/Audit'
 import Account from './pages/Account'
 import TaskView from './pages/TaskView'
+import Server from './pages/Server'
 
 function Guard({ perm, anyOf, children }) {
   const { me, can } = useAuth()
@@ -32,6 +33,7 @@ export default function App() {
         <Route path="audit" element={<Guard anyOf={['audit.view_all', 'audit.view_own']}><Audit /></Guard>} />
         <Route path="account" element={<Account />} />
         <Route path="tasks/:id" element={<TaskView />} />
+        <Route path="server" element={<Guard perm="admin.metrics"><Server /></Guard>} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
