@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Alert, App, AutoComplete, Button, Card, Form, Input, List, Select, Space, Table, Tag, Typography } from 'antd'
-import { CodeOutlined, PlayCircleOutlined, PoweroffOutlined, ReloadOutlined, RocketOutlined } from '@ant-design/icons'
+import { CodeOutlined, PaperClipOutlined, PlayCircleOutlined, PoweroffOutlined, ReloadOutlined, RocketOutlined } from '@ant-design/icons'
+import { IMAGE_ACCEPT, uploadImages } from '../uploads'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import { useAuth } from '../auth'
@@ -139,11 +140,15 @@ function NewTask() {
   const [busy, setBusy] = useState(false)
   const isOwner = me.role === 'owner'
 
+  const [files, setFiles] = useState([])
+
   const submit = async (v) => {
     setBusy(true)
     try {
-      const t = await api('/tasks', { method: 'POST', body: v })
+      const attachments = await uploadImages(files)
+      const t = await api('/tasks', { method: 'POST', body: { ...v, attachments } })
       form.resetFields(['prompt'])
+      setFiles([])
       nav(`/tasks/${t.id}`)
     } catch (e) {
       message.error(e.message)
@@ -173,6 +178,19 @@ function NewTask() {
             autoSize={{ minRows: 3, maxRows: 10 }}
             placeholder="e.g. Fix the failing test in tests/test_orders.py and explain the cause"
           />
+        </Form.Item>
+        <Form.Item label="Screenshots (optional, up to 5)">
+          <Space wrap>
+            <Button icon={<PaperClipOutlined />} onClick={() => document.getElementById('sbai-attach').click()}>Attach image</Button>
+            <input id="sbai-attach" type="file" accept={IMAGE_ACCEPT} multiple hidden
+              onChange={(e) => {
+                setFiles([...files, ...Array.from(e.target.files || [])].slice(0, 5))
+                e.target.value = ''
+              }} />
+            {files.map((f, i) => (
+              <Tag key={i} closable onClose={() => setFiles(files.filter((_, j) => j !== i))}>{f.name}</Tag>
+            ))}
+          </Space>
         </Form.Item>
         <Space wrap>
           <Button type="primary" htmlType="submit" icon={<RocketOutlined />} loading={busy}>Start</Button>

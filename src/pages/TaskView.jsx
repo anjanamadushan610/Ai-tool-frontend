@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import {
-  Alert, App, Button, Card, Collapse, Empty, Input, Space, Spin, Tabs, Tag, Typography,
+  Alert, App, Button, Card, Checkbox, Collapse, Empty, Input, Space, Spin, Tabs, Tag, Typography,
 } from 'antd'
-import { CheckOutlined, CloseOutlined, SendOutlined, StopOutlined } from '@ant-design/icons'
+import { CheckOutlined, CloseOutlined, PaperClipOutlined, SendOutlined, StopOutlined } from '@ant-design/icons'
 import { api } from '../api'
 import { useAuth } from '../auth'
 import { fmt } from '../time'
+import { IMAGE_ACCEPT, uploadImages } from '../uploads'
 
 export const STATUS_COLOR = { queued: 'blue', running: 'processing', done: 'green', failed: 'red', stopped: 'orange', interrupted: 'magenta' }
 const ACTIVE = ['queued', 'running']
@@ -45,6 +46,14 @@ function Event({ e }) {
     return <Typography.Text type="secondary" style={{ fontSize: 12 }}>— {d.status}{d.by ? ` by ${d.by}` : ''} · {fmt(e.at)}</Typography.Text>
   }
   if (e.kind === 'error') return <Alert type="error" showIcon message={d.message} />
+  if (e.kind === 'git') {
+    return (
+      <Typography.Text style={{ fontSize: 12 }}>
+        <Tag color={d.ok ? 'green' : 'red'}>{d.ok ? (d.pushed ? 'pushed' : 'committed') : 'git failed'}</Tag>
+        {d.branch} · {d.files} file(s) · “{d.message}” · {d.by}
+      </Typography.Text>
+    )
+  }
   if (e.kind === 'approval') {
     const color = { pending: 'gold', allowed: 'green', denied: 'red' }[d.status]
     return <Typography.Text style={{ fontSize: 12 }}><Tag color={color}>{d.status}</Tag>{d.tool}{d.by ? ` · ${d.by}` : ''}</Typography.Text>
@@ -92,7 +101,73 @@ function Event({ e }) {
   return null
 }
 
-function Diff({ id }) {
+function CommitPanel({ id, canPush }) {
+  const { message } = App.useApp()
+  const [git, setGit] = useState(null)
+  const [picked, setPicked] = useState([])
+  const [msg, setMsg] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState(null)
+
+  const load = useCallback(() => {
+    api(`/tasks/${id}/git`).then((g) => {
+      setGit(g)
+      setPicked(g.files.map((f) => f.path))
+    }).catch((e) => message.error(e.message))
+  }, [id, message])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  const run = async (push) => {
+    setBusy(true)
+    setResult(null)
+    try {
+      const r = await api(`/tasks/${id}/commit`, { method: 'POST', body: { message: msg, files: picked, push } })
+      setResult(r)
+      if (r.ok) {
+        message.success(push ? `Pushed to ${r.branch}` : 'Committed')
+        setMsg('')
+      }
+      load()
+    } catch (e) {
+      message.error(e.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (!git) return <Spin />
+  const protectedBranch = ['main', 'master'].includes(git.branch)
+  return (
+    <Card size="small" title={<Space>Commit <Tag>{git.branch}</Tag>{git.ahead ? <Tag color="blue">{git.ahead} not pushed</Tag> : null}</Space>}>
+      {protectedBranch && <Alert type="warning" showIcon message={`${git.branch} is never committed to from the app. Switch to development in VS Code.`} style={{ marginBottom: 8 }} />}
+      {git.files.length === 0 ? (
+        <Typography.Text type="secondary">Nothing to commit.</Typography.Text>
+      ) : (
+        <Space direction="vertical" style={{ width: '100%' }}>
+          <Checkbox.Group value={picked} onChange={setPicked} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}
+            options={git.files.map((f) => ({ value: f.path, label: <span><Tag style={{ fontFamily: 'monospace' }}>{f.status}</Tag>{f.path}</span> }))} />
+          {canPush && !protectedBranch && (
+            <>
+              <Input.TextArea value={msg} onChange={(e) => setMsg(e.target.value)} placeholder="Commit message" autoSize={{ minRows: 1, maxRows: 4 }} />
+              <Space wrap>
+                <Button onClick={() => run(false)} loading={busy} disabled={!msg.trim() || !picked.length}>Commit</Button>
+                <Button type="primary" onClick={() => run(true)} loading={busy} disabled={!msg.trim() || !picked.length}>Commit + push to {git.branch}</Button>
+              </Space>
+            </>
+          )}
+        </Space>
+      )}
+      {result && !result.ok && (
+        <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12, marginTop: 8 }}>{result.steps.map((s) => `$ git ${s.step}\n${s.output}`).join('\n')}</pre>
+      )}
+    </Card>
+  )
+}
+
+function Diff({ id, canPush, active }) {
   const [data, setData] = useState(null)
   const [err, setErr] = useState('')
   useEffect(() => {
@@ -103,6 +178,7 @@ function Diff({ id }) {
   if (!data.diff && !data.status) return <Empty description="No changes in this folder." />
   return (
     <Space direction="vertical" style={{ width: '100%' }}>
+      {!active && <CommitPanel id={id} canPush={canPush} />}
       <pre style={{ margin: 0 }}>{data.status}</pre>
       {data.truncated && <Alert type="warning" message="The diff is long; only the first part is shown." />}
       <pre style={{ fontSize: 12, overflow: 'auto', maxHeight: '60vh' }}>
@@ -116,11 +192,13 @@ function Diff({ id }) {
 
 export default function TaskView() {
   const { id } = useParams()
-  const { me } = useAuth()
+  const { me, can } = useAuth()
   const { message } = App.useApp()
   const [task, setTask] = useState(null)
   const [events, setEvents] = useState([])
   const [text, setText] = useState('')
+  const [files, setFiles] = useState([])
+  const fileInput = useRef(null)
   const [busy, setBusy] = useState(false)
   const lastId = useRef(0)
   const bottom = useRef(null)
@@ -172,8 +250,10 @@ export default function TaskView() {
     if (!text.trim()) return
     setBusy(true)
     try {
-      await api(`/tasks/${id}/messages`, { method: 'POST', body: { prompt: text } })
+      const attachments = await uploadImages(files)
+      await api(`/tasks/${id}/messages`, { method: 'POST', body: { prompt: text, attachments } })
       setText('')
+      setFiles([])
       poll()
     } catch (e) {
       message.error(e.message)
@@ -241,8 +321,21 @@ export default function TaskView() {
                     }
                   />
                 ))}
+                {mine && files.length > 0 && (
+                  <Space wrap>
+                    {files.map((f, i) => (
+                      <Tag key={i} closable onClose={() => setFiles(files.filter((_, j) => j !== i))}>{f.name}</Tag>
+                    ))}
+                  </Space>
+                )}
                 {mine && (
                   <Space.Compact style={{ width: '100%' }}>
+                    <Button icon={<PaperClipOutlined />} disabled={active} onClick={() => fileInput.current?.click()} aria-label="Attach image" />
+                    <input ref={fileInput} type="file" accept={IMAGE_ACCEPT} multiple hidden
+                      onChange={(e) => {
+                        setFiles([...files, ...Array.from(e.target.files || [])].slice(0, 5))
+                        e.target.value = ''
+                      }} />
                     <Input.TextArea
                       value={text}
                       onChange={(e) => setText(e.target.value)}
@@ -263,7 +356,7 @@ export default function TaskView() {
               </Space>
             ),
           },
-          { key: 'diff', label: 'Changes', children: <Diff id={id} /> },
+          { key: 'diff', label: 'Changes', children: <Diff id={id} active={active} canPush={mine && can('git.push_staff')} /> },
         ]}
       />
     </Card>
